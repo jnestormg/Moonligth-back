@@ -8,12 +8,12 @@ datasource db {
 }
 
 model User {
-  id           String         @id @default(uuid())
-  email        String         @unique
-  name         String
-  password     String
-  createdAt    DateTime       @default(now())
-  updatedAt    DateTime       @updatedAt
+  id            String         @id @default(uuid())
+  email         String         @unique
+  name          String
+  password      String
+  createdAt     DateTime       @default(now())
+  updatedAt     DateTime       @updatedAt
   refreshTokens RefreshToken[]
 
   @@map("users")
@@ -23,10 +23,151 @@ model RefreshToken {
   id        String   @id @default(uuid())
   tokenHash String   @unique
   userId    String
-  user      User     @relation(fields: [userId], references: [id], onDelete: Cascade)
   expiresAt DateTime
   createdAt DateTime @default(now())
+  user      User     @relation(fields: [userId], references: [id], onDelete: Cascade)
 
   @@index([userId])
   @@map("refresh_tokens")
+}
+
+/// This table contains check constraints and requires additional setup for migrations. Visit https://pris.ly/d/check-constraints for more info.
+model aplicaciones_credito {
+  id                     BigInt        @id @default(autoincrement())
+  credito_id             BigInt
+  reservacion_destino_id BigInt        @unique(map: "reservacion_destino_id")
+  monto                  Decimal       @db.Decimal(10, 2)
+  aplicado_en            DateTime      @default(now()) @db.Timestamp(0)
+  creditos               creditos      @relation(fields: [credito_id], references: [id], onDelete: NoAction, onUpdate: NoAction, map: "fk_aplicaciones_credito")
+  reservaciones          reservaciones @relation(fields: [reservacion_destino_id], references: [id], onDelete: NoAction, onUpdate: NoAction, map: "fk_aplicaciones_reservacion")
+
+  @@index([credito_id], map: "fk_aplicaciones_credito")
+}
+
+model clientes {
+  id            Int             @id @default(autoincrement())
+  nombre        String          @db.VarChar(100)
+  telefono      String          @db.VarChar(30)
+  correo        String?         @db.VarChar(255)
+  creado_en     DateTime        @default(now()) @db.Timestamp(0)
+  creditos      creditos[]
+  reservaciones reservaciones[]
+
+  @@index([telefono])
+}
+
+/// This table contains check constraints and requires additional setup for migrations. Visit https://pris.ly/d/check-constraints for more info.
+model creditos {
+  id                    BigInt                 @id @default(autoincrement())
+  cliente_id            Int
+  reservacion_origen_id BigInt                 @unique(map: "reservacion_origen_id")
+  monto                 Decimal                @db.Decimal(10, 2)
+  saldo                 Decimal                @db.Decimal(10, 2)
+  creado_en             DateTime               @default(now()) @db.Timestamp(0)
+  vence_en              DateTime               @db.Timestamp(0)
+  aplicaciones_credito  aplicaciones_credito[]
+  clientes              clientes               @relation(fields: [cliente_id], references: [id], onDelete: NoAction, onUpdate: NoAction, map: "fk_creditos_cliente")
+  reservaciones         reservaciones          @relation(fields: [reservacion_origen_id], references: [id], onDelete: NoAction, onUpdate: NoAction, map: "fk_creditos_reservacion")
+  movimientos_credito   movimientos_credito[]
+
+  @@index([cliente_id], map: "fk_creditos_cliente")
+}
+
+/// This table contains check constraints and requires additional setup for migrations. Visit https://pris.ly/d/check-constraints for more info.
+model empleados {
+  id                      Int                       @id @default(autoincrement())
+  nombre                  String                    @db.VarChar(100)
+  correo                  String                    @db.VarChar(255)
+  contrasena_hash         String                    @db.VarChar(255)
+  rol                     String                    @db.VarChar(30)
+  activo                  Boolean                   @default(true)
+  creado_en               DateTime                  @default(now()) @db.Timestamp(0)
+  historial_reservaciones historial_reservaciones[]
+}
+
+model historial_reservaciones {
+  id              BigInt        @id @default(autoincrement())
+  reservacion_id  BigInt
+  estado_anterior String?       @db.VarChar(30)
+  estado_nuevo    String        @db.VarChar(30)
+  descripcion     String        @db.VarChar(255)
+  responsable_id  Int?
+  registrado_en   DateTime      @default(now()) @db.Timestamp(0)
+  reservaciones   reservaciones @relation(fields: [reservacion_id], references: [id], onDelete: NoAction, onUpdate: NoAction, map: "fk_historial_reservacion")
+  empleados       empleados?    @relation(fields: [responsable_id], references: [id], onDelete: NoAction, onUpdate: NoAction, map: "fk_historial_responsable")
+
+  @@index([responsable_id], map: "fk_historial_responsable")
+  @@index([reservacion_id, registrado_en, id], map: "historial_reservaciones_reservacion_fecha")
+}
+
+/// This table contains check constraints and requires additional setup for migrations. Visit https://pris.ly/d/check-constraints for more info.
+model movimientos_credito {
+  id             BigInt        @id @default(autoincrement())
+  credito_id     BigInt
+  reservacion_id BigInt
+  tipo           String        @db.VarChar(20)
+  monto          Decimal       @db.Decimal(10, 2)
+  registrado_en  DateTime      @default(now()) @db.Timestamp(0)
+  creditos       creditos      @relation(fields: [credito_id], references: [id], onDelete: NoAction, onUpdate: NoAction, map: "fk_movimientos_credito")
+  reservaciones  reservaciones @relation(fields: [reservacion_id], references: [id], onDelete: NoAction, onUpdate: NoAction, map: "fk_movimientos_reservacion")
+
+  @@unique([credito_id, reservacion_id, tipo], map: "movimientos_credito_operacion_unica")
+  @@index([reservacion_id], map: "fk_movimientos_reservacion")
+  @@index([credito_id, registrado_en, id], map: "movimientos_credito_credito_fecha")
+}
+
+/// This table contains check constraints and requires additional setup for migrations. Visit https://pris.ly/d/check-constraints for more info.
+model pagos {
+  id             BigInt        @id @default(autoincrement())
+  reservacion_id BigInt
+  tipo           String        @db.VarChar(20)
+  monto          Decimal       @db.Decimal(10, 2)
+  metodo         String        @db.VarChar(20)
+  referencia     String?       @db.VarChar(100)
+  registrado_en  DateTime      @default(now()) @db.Timestamp(0)
+  anticipo_unico BigInt?       @unique(map: "un_anticipo_por_reservacion")
+  reservaciones  reservaciones @relation(fields: [reservacion_id], references: [id], onDelete: NoAction, onUpdate: NoAction, map: "fk_pagos_reservacion")
+
+  @@index([reservacion_id], map: "fk_pagos_reservacion")
+}
+
+/// This table contains check constraints and requires additional setup for migrations. Visit https://pris.ly/d/check-constraints for more info.
+model reservaciones {
+  id                      BigInt                    @id @default(autoincrement())
+  cliente_id              Int
+  sala_id                 Int
+  inicio                  DateTime                  @db.Timestamp(0)
+  fin                     DateTime                  @db.Timestamp(0)
+  fin_bloqueo             DateTime                  @db.Timestamp(0)
+  asistentes              Int
+  costo_total             Decimal                   @db.Decimal(10, 2)
+  anticipo_requerido      Decimal                   @db.Decimal(10, 2)
+  estado                  String                    @db.VarChar(30)
+  vencimiento_apartado    DateTime?                 @db.Timestamp(0)
+  folio                   String?                   @unique(map: "reservaciones_folio_unico") @db.VarChar(24)
+  cancelada_en            DateTime?                 @db.Timestamp(0)
+  creado_en               DateTime                  @default(now()) @db.Timestamp(0)
+  aplicaciones_credito    aplicaciones_credito?
+  creditos                creditos?
+  historial_reservaciones historial_reservaciones[]
+  movimientos_credito     movimientos_credito[]
+  pagos                   pagos[]
+  clientes                clientes                  @relation(fields: [cliente_id], references: [id], onDelete: NoAction, onUpdate: NoAction, map: "fk_reservaciones_cliente")
+  salas                   salas                     @relation(fields: [sala_id], references: [id], onDelete: NoAction, onUpdate: NoAction, map: "fk_reservaciones_sala")
+
+  @@index([cliente_id], map: "fk_reservaciones_cliente")
+  @@index([sala_id], map: "fk_reservaciones_sala")
+  @@index([inicio, sala_id], map: "reservaciones_inicio_sala_idx")
+}
+
+/// This table contains check constraints and requires additional setup for migrations. Visit https://pris.ly/d/check-constraints for more info.
+model salas {
+  id            Int             @id @default(autoincrement())
+  codigo        String          @unique(map: "codigo") @db.VarChar(20)
+  capacidad     Int
+  tamano        String          @db.VarChar(20)
+  tematica      String          @db.VarChar(50)
+  precio_hora   Decimal         @db.Decimal(10, 2)
+  estado        String          @default("habilitada") @db.VarChar(20)
+  reservaciones reservaciones[]
 }
