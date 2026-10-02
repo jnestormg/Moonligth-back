@@ -73,6 +73,7 @@ cp .env.example .env
 | `ACCESS_TOKEN_TTL` | Duración del Access Token | `15m` |
 | `REFRESH_TOKEN_TTL` | Duración del Refresh Token | `7d` |
 | `COOKIE_SECURE` | `true` solo bajo HTTPS | `false` |
+| `CORS_ORIGINS` | Lista separada por comas de orígenes permitidos | `http://localhost:4200` |
 
 > Los secretos de ejemplo sirven para desarrollo. En producción genera valores aleatorios largos.
 
@@ -286,3 +287,166 @@ curl -s -b $J -c $J -X POST $BASE/auth/refresh
 # 4. Cerrar sesión
 curl -s -b $J -c $J -X POST $BASE/auth/logout
 ```
+
+---
+
+## CORS y consumo desde frontend (Angular u otro SPA)
+
+Por defecto la API está pensada para correr en `http://localhost:3001` y servir a un frontend en `http://localhost:4200`. Para habilitar CORS se usa la variable `CORS_ORIGINS` (lista separada por comas):
+
+```bash
+# .env (desarrollo)
+CORS_ORIGINS=http://localhost:4200
+
+# Producción (múltiples orígenes)
+CORS_ORIGINS=https://app.example.com,https://staging.example.com
+```
+
+El middleware (`src/middlewares/cors.middleware.ts`) responde los preflight `OPTIONS` con:
+
+- `Access-Control-Allow-Origin: <origen permitido>`
+- `Access-Control-Allow-Credentials: true`
+- `Access-Control-Allow-Methods: GET, POST, PUT, PATCH, DELETE, OPTIONS`
+- `Access-Control-Allow-Headers: Content-Type, Authorization`
+- `Access-Control-Max-Age: 86400`
+
+> En producción `CORS_ORIGINS` es obligatorio: si la variable viene vacía el proceso falla al validar variables de entorno (no se cae a `localhost:4200`). Esto es intencional, evita exponer la API con credenciales a orígenes no listados.
+
+### Cookie del refresh token
+
+El refresh token viaja en una cookie `httpOnly`, `Path=/auth`, **`SameSite=Lax`**. Esto permite:
+
+- Dev (`http://localhost:4200` → `http://localhost:3001`): mismo registrable domain (`localhost`), así que el navegador envía la cookie en cualquier request, incluido el `POST /auth/refresh` desde un interceptor HTTP.
+- Prod con dominios distintos (`app.x.com` + `api.x.com`): son sitios diferentes; `SameSite=Lax` **bloquea** la cookie en sub‑requests cross-site iniciados desde JS. Soluciones:
+  - Usar subdominios bajo el mismo dominio registrable (`app.example.com` + `api.example.com`) → mismo sitio, cookie viaja.
+  - O servir SPA y API bajo el mismo origen con un reverse proxy (nginx/Caddy) que haga proxy de `/auth/*` y `/users/*` a la API. Sin CORS en absoluto.
+
+### Verificación rápida
+
+Preflight esperado:
+
+```bash
+curl -i -X OPTIONS http://localhost:3001/auth/login \
+  -H "Origin: http://localhost:4200" \
+  -H "Access-Control-Request-Method: POST" \
+  -H "Access-Control-Request-Headers: content-type"
+# → 204, con Access-Control-Allow-Origin y Access-Control-Allow-Credentials
+```
+
+Login + cookie:
+
+```bash
+curl -i -X POST http://localhost:3001/auth/login \
+  -H "Origin: http://localhost:4200" \
+  -H "Content-Type: application/json" \
+  -c cookies.txt \
+  -d '{"email":"teo@example.com","password":"secret123"}'
+# → Set-Cookie: refresh_token=...; Path=/auth; HttpOnly; SameSite=Lax
+```
+
+---
+
+## Integración con Angular (guía rápida)
+
+### 1. URL base
+
+```ts
+// src/environments/environment.ts
+export const environment = {
+  apiBaseUrl: 'http://localhost:3001'
+};
+```
+
+### 2. Bootstrap HTTP con credenciales
+
+```ts
+// app.config.ts
+import { provideHttpClient, withFetch, withInterceptors } from '@angular/common/http';
+import { authInterceptor } from './core/interceptors/auth.interceptor';
+
+export const appConfig: ApplicationConfig = {
+  providers: [
+    provideHttpClient(withFetch(), withInterceptors([authInterceptor]))
+  ]
+};
+```
+
+### 3. Almacén del access token
+
+Guárdalo en memoria (signal o servicio), nunca en `localStorage`:
+
+```ts
+@Injectable({ providedIn: 'root' })
+export class AuthService {
+  private readonly accessToken = signal<string | null>(null);
+
+  get token(): string | null {
+    return this.accessToken();
+  }
+
+  setToken(token: string | null): void {
+    this.accessToken.set(token);
+  }
+
+  refresh(): Observable<string> {
+    return this.http
+      .post<{ accessToken: string }>(
+        `${environment.apiBaseUrl}/auth/refresh`,
+        {},
+        { withCredentials: true }   // necesario para enviar la cookie httpOnly
+      )
+      .pipe(map((res) => res.accessToken));
+  }
+}
+```
+
+### 4. Interceptor HTTP (esquema)
+
+```ts
+export const authInterceptor: HttpInterceptorFn = (req, next) => {
+  const auth = inject(AuthService);
+  const router = inject(Router);
+
+  const authReq = auth.token
+    ? req.clone({ setHeaders: { Authorization: `Bearer ${auth.token}` } })
+    : req;
+
+  return next(authReq).pipe(
+    catchError((error) => {
+      if (error.status !== 401) {
+        return throwError(() => error);
+      }
+
+      if (req.url.endsWith('/auth/refresh')) {
+        auth.setToken(null);
+        router.navigateByUrl('/login');
+        return throwError(() => error);
+      }
+
+      // Llamada única de refresh; el resto espera
+      return auth.refresh().pipe(
+        switchMap((newToken) => {
+          auth.setToken(newToken);
+          return next(req.clone({ setHeaders: { Authorization: `Bearer ${newToken}` } }));
+        })
+      );
+    })
+  );
+};
+```
+
+### 5. Login / register
+
+```ts
+this.http
+  .post<{ user: User; accessToken: string }>(
+    `${environment.apiBaseUrl}/auth/login`,
+    { email, password },
+    { withCredentials: true }
+  )
+  .subscribe(({ user, accessToken }) => {
+    this.auth.setToken(accessToken);
+  });
+```
+
+> Importante: cualquier llamada a `/auth/*` debe usar `withCredentials: true` para que el navegador la incluya en el flujo de la cookie. Centralízalo en un `AuthService` para no olvidarlo.
