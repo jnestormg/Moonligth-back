@@ -42,8 +42,9 @@ function hashToken(token: string): string {
 
 function signAccessToken(user: AuthenticatedUser): string {
   const payload: AccessTokenPayload = {
-    sub: user.id,
+    sub: String(user.id),
     email: user.email,
+    rol: user.rol,
   };
 
   return jwt.sign(payload, env.JWT_ACCESS_SECRET, {
@@ -67,21 +68,21 @@ async function issueTokens(user: AuthenticatedUser): Promise<TokenPair> {
   return { accessToken, refreshToken };
 }
 
-async function toAuthenticatedUser(userId: string): Promise<AuthenticatedUser> {
-  const user = await prisma.user.findUnique({
+async function toAuthenticatedUser(userId: number): Promise<AuthenticatedUser> {
+  const user = await prisma.empleados.findUnique({
     where: { id: userId },
-    select: { id: true, email: true, name: true },
+    select: { id: true, correo: true, nombre: true, rol: true, activo: true },
   });
 
-  if (!user) {
-    throw new AppError("Usuario no encontrado", 404);
+  if (!user || !user.activo) {
+    throw new AppError("Empleado no encontrado", 404);
   }
 
-  return user;
+  return { id: user.id, email: user.correo, name: user.nombre, rol: user.rol };
 }
 
 export async function register(input: RegisterInput): Promise<TokenPair & { user: AuthenticatedUser }> {
-  const existing = await prisma.user.findUnique({ where: { email: input.email } });
+  const existing = await prisma.empleados.findFirst({ where: { correo: input.email } });
 
   if (existing) {
     throw new AppError("El email ya está registrado", 409);
@@ -89,28 +90,30 @@ export async function register(input: RegisterInput): Promise<TokenPair & { user
 
   const password = await bcrypt.hash(input.password, SALT_ROUNDS);
 
-  const user = await prisma.user.create({
+  const user = await prisma.empleados.create({
     data: {
-      name: input.name,
-      email: input.email,
-      password,
+      nombre: input.name,
+      correo: input.email,
+      contrasena_hash: password,
+      rol: "admin",
     },
-    select: { id: true, email: true, name: true },
+    select: { id: true },
   });
 
-  const tokens = await issueTokens(user);
+  const authenticatedUser = await toAuthenticatedUser(user.id);
+  const tokens = await issueTokens(authenticatedUser);
 
-  return { ...tokens, user };
+  return { ...tokens, user: authenticatedUser };
 }
 
 export async function login(input: LoginInput): Promise<TokenPair & { user: AuthenticatedUser }> {
-  const user = await prisma.user.findUnique({ where: { email: input.email } });
+  const user = await prisma.empleados.findFirst({ where: { correo: input.email } });
 
-  if (!user) {
+  if (!user || !user.activo) {
     throw new AppError("Credenciales inválidas", 401);
   }
 
-  const valid = await bcrypt.compare(input.password, user.password);
+  const valid = await bcrypt.compare(input.password, user.contrasena_hash);
 
   if (!valid) {
     throw new AppError("Credenciales inválidas", 401);
@@ -118,8 +121,9 @@ export async function login(input: LoginInput): Promise<TokenPair & { user: Auth
 
   const authenticatedUser: AuthenticatedUser = {
     id: user.id,
-    email: user.email,
-    name: user.name,
+    email: user.correo,
+    name: user.nombre,
+    rol: user.rol,
   };
 
   const tokens = await issueTokens(authenticatedUser);
@@ -158,7 +162,7 @@ export async function logout(rawToken: string | undefined): Promise<void> {
   });
 }
 
-export async function getMe(userId: string): Promise<AuthenticatedUser> {
+export async function getMe(userId: number): Promise<AuthenticatedUser> {
   return toAuthenticatedUser(userId);
 }
 

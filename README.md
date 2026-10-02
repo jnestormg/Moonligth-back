@@ -27,18 +27,20 @@ API REST de autenticación con JWT (Access Token + Refresh Token) construida con
 project/
 ├── src/
 │   ├── config/env.ts          # Variables de entorno validadas con Zod
-│   ├── controllers/           # auth.controller.ts, users.controller.ts
-│   ├── middlewares/           # auth (Bearer), validate (Zod), error (central)
-│   ├── routes/                # auth.routes.ts, users.routes.ts
-│   ├── schemas/               # Esquemas Zod de entrada
-│   ├── services/              # auth.service.ts, user.service.ts
+│   ├── controllers/           # auth, users, salas, reservaciones, clientes, pedidos, caja, dashboard
+│   ├── middlewares/           # auth (Bearer), validate (Zod), error (central), cors
+│   ├── routes/                # auth, users + rutas de negocio
+│   ├── schemas/               # auth.schema, user.schema, business.schema
+│   ├── services/              # auth.service, user.service + servicios de negocio
 │   ├── types/auth.types.ts    # Payloads JWT y tipos de usuario
 │   ├── lib/prisma.ts          # Cliente Prisma (singleton)
+│   ├── lib/serialize.ts       # BigInt/Decimal → number en JSON
 │   ├── app.ts                 # Express: middlewares + rutas
 │   └── server.ts              # Arranque y graceful shutdown
 ├── prisma/
-│   ├── schema.prisma          # Modelos User y RefreshToken
-│   └── migrations/            # Migración inicial
+│   ├── schema.prisma          # Modelos de auth y de negocio (salas, clientes, reservaciones, pagos, pedidos…)
+│   ├── seed.ts                # Datos de ejemplo (npm run prisma:seed)
+│   └── migrations/            # Migraciones
 ├── Dockerfile
 ├── docker-compose.yml
 ├── .env.example
@@ -290,6 +292,37 @@ curl -s -b $J -c $J -X POST $BASE/auth/logout
 
 ---
 
+## Endpoints de negocio (Moonlight)
+
+Todos requieren `Authorization: Bearer <accessToken>`.
+
+| Método | Ruta | Descripción |
+|---|---|---|
+| GET | `/dashboard/resumen` | KPIs del día, agenda, ocupación de salas y venta estimada |
+| GET | `/salas`, `/salas/:id` | Directorio / detalle de sala |
+| GET | `/reservaciones?fecha&estado&q` | Lista con filtros |
+| POST | `/reservaciones` | Crea reservación (valida sala, capacidad y solapes; genera folio) |
+| GET | `/reservaciones/:id` | Detalle con pagos, pedidos e historial |
+| PATCH | `/reservaciones/:id` | Actualiza datos y recalcula costo |
+| POST | `/reservaciones/:id/cancelar` | Cancela la reservación |
+| POST | `/reservaciones/:id/llegada` | Marca `en-sala` |
+| GET | `/clientes?q=`, `/clientes/:id` | Directorio / perfil de cliente con historial |
+| GET | `/pedidos?estado=`, `/pedidos/:id` | Comandas / detalle |
+| PATCH | `/pedidos/:id/estado` | `pendiente` → `preparando` → `listo` → `entregado` |
+| GET | `/caja/resumen` | KPIs del turno (ingresos, anticipos, saldos) |
+| GET | `/caja/movimientos` | Tabla de reservaciones con total/anticipo/saldo |
+| POST | `/caja/reservaciones/:id/pagos` | Registra pago o anticipo |
+
+### Seed
+
+```bash
+npm run prisma:seed
+```
+
+Crea el empleado demo `admin@moonlight.mx` / `secret123`, 8 salas, clientes, las reservaciones de ejemplo del turno y los pedidos mostrados en el prototipo.
+
+---
+
 ## CORS y consumo desde frontend (Angular u otro SPA)
 
 Por defecto la API está pensada para correr en `http://localhost:3001` y servir a un frontend en `http://localhost:4200`. Para habilitar CORS se usa la variable `CORS_ORIGINS` (lista separada por comas):
@@ -347,6 +380,8 @@ curl -i -X POST http://localhost:3001/auth/login \
 ---
 
 ## Integración con Angular (guía rápida)
+
+> Nota: la API de autenticación ahora usa la tabla `empleados` (nombre, correo, contraseña hasheada, rol) en lugar de `users`. El contrato REST se mantiene: `name/email/password` en register/login, y la respuesta `user` ahora incluye `rol`.
 
 ### 1. URL base
 

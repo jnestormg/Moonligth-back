@@ -13,11 +13,13 @@ export const requireAuth: RequestHandler = async (req: Request, _res: Response, 
 
     const payload = verifyAccessToken(header.slice("Bearer ".length));
 
-    if (!payload.sub) {
+    const userId = Number(payload.sub);
+
+    if (!payload.sub || !Number.isInteger(userId)) {
       throw new AppError("Token de acceso inválido", 401);
     }
 
-    req.user = await getUserById(payload.sub);
+    req.user = await getUserById(userId);
     next();
   } catch (error) {
     next(error);

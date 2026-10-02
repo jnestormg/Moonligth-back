@@ -3,6 +3,7 @@ import type { JwtPayload } from "jsonwebtoken";
 export interface AccessTokenPayload extends JwtPayload {
   sub: string;
   email: string;
+  rol: string;
 }
 
 export interface RefreshTokenPayload extends JwtPayload {
@@ -11,9 +12,10 @@ export interface RefreshTokenPayload extends JwtPayload {
 }
 
 export interface AuthenticatedUser {
-  id: string;
+  id: number;
   email: string;
   name: string;
+  rol: string;
 }
 
 declare global {

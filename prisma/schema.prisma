@@ -7,25 +7,13 @@ datasource db {
   url      = env("DATABASE_URL")
 }
 
-model User {
-  id            String         @id @default(uuid())
-  email         String         @unique
-  name          String
-  password      String
-  createdAt     DateTime       @default(now())
-  updatedAt     DateTime       @updatedAt
-  refreshTokens RefreshToken[]
-
-  @@map("users")
-}
-
 model RefreshToken {
-  id        String   @id @default(uuid())
-  tokenHash String   @unique
-  userId    String
+  id        String    @id @default(uuid())
+  tokenHash String    @unique
+  userId    Int
   expiresAt DateTime
-  createdAt DateTime @default(now())
-  user      User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  createdAt DateTime  @default(now())
+  empleado  empleados @relation(fields: [userId], references: [id], onDelete: Cascade)
 
   @@index([userId])
   @@map("refresh_tokens")
@@ -82,6 +70,7 @@ model empleados {
   rol                     String                    @db.VarChar(30)
   activo                  Boolean                   @default(true)
   creado_en               DateTime                  @default(now()) @db.Timestamp(0)
+  refreshTokens           RefreshToken[]
   historial_reservaciones historial_reservaciones[]
 }
 
@@ -152,12 +141,41 @@ model reservaciones {
   historial_reservaciones historial_reservaciones[]
   movimientos_credito     movimientos_credito[]
   pagos                   pagos[]
+  pedidos                 pedidos[]
   clientes                clientes                  @relation(fields: [cliente_id], references: [id], onDelete: NoAction, onUpdate: NoAction, map: "fk_reservaciones_cliente")
   salas                   salas                     @relation(fields: [sala_id], references: [id], onDelete: NoAction, onUpdate: NoAction, map: "fk_reservaciones_sala")
 
   @@index([cliente_id], map: "fk_reservaciones_cliente")
   @@index([sala_id], map: "fk_reservaciones_sala")
   @@index([inicio, sala_id], map: "reservaciones_inicio_sala_idx")
+}
+
+model pedidos {
+  id             BigInt        @id @default(autoincrement())
+  reservacion_id BigInt
+  estado         String        @default("pendiente") @db.VarChar(20)
+  total          Decimal       @default(0) @db.Decimal(10, 2)
+  nota_cocina    String?       @db.VarChar(255)
+  creado_en      DateTime      @default(now()) @db.Timestamp(0)
+  actualizado_en DateTime      @updatedAt @db.Timestamp(0)
+  reservaciones  reservaciones @relation(fields: [reservacion_id], references: [id], onDelete: NoAction, onUpdate: NoAction)
+  items          pedido_items[]
+
+  @@index([reservacion_id])
+  @@map("pedidos")
+}
+
+model pedido_items {
+  id          BigInt  @id @default(autoincrement())
+  pedido_id   BigInt
+  nombre      String  @db.VarChar(120)
+  descripcion String? @db.VarChar(255)
+  cantidad    Int
+  precio      Decimal @db.Decimal(10, 2)
+  pedido      pedidos @relation(fields: [pedido_id], references: [id], onDelete: Cascade)
+
+  @@index([pedido_id])
+  @@map("pedido_items")
 }
 
 /// This table contains check constraints and requires additional setup for migrations. Visit https://pris.ly/d/check-constraints for more info.
